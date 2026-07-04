@@ -373,6 +373,7 @@ BASE_HTML = """
         <a class="nav-link-custom" href="/clienti"><i class="bi bi-people"></i>Pazienti / Clienti</a>
         <a class="nav-link-custom" href="/pagamenti"><i class="bi bi-cash-stack"></i>Pagamenti</a>
         <a class="nav-link-custom" href="/agenda"><i class="bi bi-calendar-week"></i>Agenda</a>
+        <a class="nav-link-custom" href="/impostazioni"><i class="bi bi-gear"></i>Impostazioni</a>
         <a class="nav-link-custom" href="/logout"><i class="bi bi-box-arrow-right"></i>Logout</a>
     </aside>
     <main class="main">
@@ -1024,6 +1025,81 @@ def service_worker():
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', event => {});''', mimetype="application/javascript")
 
+
+
+# =========================================================
+# IMPOSTAZIONI ACCOUNT
+# =========================================================
+@app.route("/impostazioni", methods=["GET", "POST"])
+@login_required
+def impostazioni():
+    if request.method == "POST":
+        nuovo_username = (request.form.get("username") or "").strip()
+        password_attuale = request.form.get("password_attuale") or ""
+        nuova_password = request.form.get("nuova_password") or ""
+        conferma_password = request.form.get("conferma_password") or ""
+
+        if not password_attuale or not current_user.check_password(password_attuale):
+            flash("Password attuale non corretta")
+            return redirect(url_for("impostazioni"))
+
+        if not nuovo_username:
+            flash("Inserisci uno username valido")
+            return redirect(url_for("impostazioni"))
+
+        utente_esistente = User.query.filter(User.username == nuovo_username, User.id != current_user.id).first()
+        if utente_esistente:
+            flash("Questo username è già in uso")
+            return redirect(url_for("impostazioni"))
+
+        current_user.username = nuovo_username
+
+        if nuova_password:
+            if len(nuova_password) < 8:
+                flash("La nuova password deve avere almeno 8 caratteri")
+                return redirect(url_for("impostazioni"))
+            if nuova_password != conferma_password:
+                flash("La nuova password e la conferma non coincidono")
+                return redirect(url_for("impostazioni"))
+            current_user.set_password(nuova_password)
+
+        db.session.commit()
+        flash("Credenziali aggiornate correttamente")
+        return redirect(url_for("impostazioni"))
+
+    html = f"""
+    <div class="topbar">
+        <div>
+            <h1 class="page-title">Impostazioni</h1>
+            <p class="muted mb-0">Modifica username e password di accesso</p>
+        </div>
+    </div>
+    <div class="soft-card p-4" style="max-width:760px;">
+        <form method="POST">
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label">Username</label>
+                    <input class="form-control" name="username" value="{current_user.username}" required>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Password attuale</label>
+                    <input class="form-control" type="password" name="password_attuale" required placeholder="Inserisci la password attuale">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Nuova password</label>
+                    <input class="form-control" type="password" name="nuova_password" placeholder="Lascia vuoto per non cambiarla">
+                    <small class="muted">Minimo 8 caratteri.</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Conferma nuova password</label>
+                    <input class="form-control" type="password" name="conferma_password" placeholder="Ripeti la nuova password">
+                </div>
+            </div>
+            <button class="btn btn-primary btn-rounded mt-4"><i class="bi bi-shield-check"></i> Salva credenziali</button>
+        </form>
+    </div>
+    """
+    return render_template_string(BASE_HTML, content=html)
 
 # =========================================================
 # FILES
