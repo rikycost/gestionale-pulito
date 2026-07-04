@@ -7,9 +7,6 @@ from datetime import datetime, timedelta
 import os
 import random
 import string
-import csv
-import io
-import zipfile
 
 # =========================================================
 # APP
@@ -376,9 +373,6 @@ BASE_HTML = """
         <a class="nav-link-custom" href="/clienti"><i class="bi bi-people"></i>Pazienti / Clienti</a>
         <a class="nav-link-custom" href="/pagamenti"><i class="bi bi-cash-stack"></i>Pagamenti</a>
         <a class="nav-link-custom" href="/agenda"><i class="bi bi-calendar-week"></i>Agenda</a>
-        <a class="nav-link-custom" href="/cerca"><i class="bi bi-search"></i>Ricerca</a>
-        <a class="nav-link-custom" href="/utenti"><i class="bi bi-person-gear"></i>Utenti</a>
-        <a class="nav-link-custom" href="/backup"><i class="bi bi-cloud-download"></i>Backup</a>
         <a class="nav-link-custom" href="/impostazioni"><i class="bi bi-gear"></i>Impostazioni</a>
         <a class="nav-link-custom" href="/logout"><i class="bi bi-box-arrow-right"></i>Logout</a>
     </aside>
@@ -900,7 +894,7 @@ def pagamenti():
 
     html = f"""
     <div class="topbar">
-        <div><h1 class="page-title">Pagamenti</h1><p class="muted mb-0">Tutte le prossime scadenze dei clienti</p></div><div class="d-flex gap-2 flex-wrap"><a class="btn btn-light btn-rounded" href="/esporta/pagamenti.csv"><i class="bi bi-filetype-csv"></i> Esporta CSV</a><a class="btn btn-primary btn-rounded" href="/backup"><i class="bi bi-cloud-download"></i> Backup</a></div>
+        <div><h1 class="page-title">Pagamenti</h1><p class="muted mb-0">Tutte le prossime scadenze dei clienti</p></div>
     </div>
     <div class="soft-card p-4 mb-4">
         <div class="d-flex gap-2 flex-wrap">
@@ -1106,94 +1100,6 @@ def impostazioni():
     </div>
     """
     return render_template_string(BASE_HTML, content=html)
-
-
-# =========================================================
-# RICERCA GLOBALE / EXPORT / BACKUP / UTENTI
-# =========================================================
-@app.route("/cerca")
-@login_required
-def cerca():
-    q = (request.args.get("q") or "").strip()
-    clienti_r, immobili_r, pagamenti_r, appuntamenti_r = [], [], [], []
-    if q:
-        like = f"%{q}%"
-        clienti_r = Cliente.query.filter(db.or_(Cliente.nome.ilike(like), Cliente.cognome.ilike(like), Cliente.telefono.ilike(like), Cliente.email.ilike(like), Cliente.note.ilike(like))).limit(20).all()
-        immobili_r = Immobile.query.filter(db.or_(Immobile.codice.ilike(like), Immobile.titolo.ilike(like), Immobile.citta.ilike(like), Immobile.indirizzo.ilike(like), Immobile.stato.ilike(like))).limit(20).all()
-        pagamenti_r = PagamentoCliente.query.filter(db.or_(PagamentoCliente.descrizione.ilike(like), PagamentoCliente.note.ilike(like))).limit(20).all()
-        appuntamenti_r = Appuntamento.query.filter(db.or_(Appuntamento.titolo.ilike(like), Appuntamento.luogo.ilike(like), Appuntamento.note.ilike(like))).limit(20).all()
-    clienti_html = ''.join([f'<a class="file-tile" href="/cliente/{c.id}"><span><b>{c.nome or ""} {c.cognome or ""}</b><br><small>{c.telefono or ""} · {c.email or ""}</small></span><i class="bi bi-arrow-right"></i></a>' for c in clienti_r]) or '<p class="muted">Nessun risultato.</p>'
-    immobili_html = ''.join([f'<a class="file-tile" href="/immobile/{i.id}"><span><b>{i.titolo or "Immobile"}</b><br><small>{i.codice or ""} · {i.citta or ""}</small></span><i class="bi bi-arrow-right"></i></a>' for i in immobili_r]) or '<p class="muted">Nessun risultato.</p>'
-    pagamenti_html = ''.join([f'<a class="file-tile" href="/cliente/{p.cliente_id}"><span><b>{p.descrizione or "Pagamento"} - {euro(p.importo or 0)}</b><br><small>Scadenza: {formato_data(p.data_scadenza)} · {p.note or ""}</small></span><i class="bi bi-arrow-right"></i></a>' for p in pagamenti_r]) or '<p class="muted">Nessun risultato.</p>'
-    appuntamenti_html = ''.join([f'<div class="file-tile"><span><b>{a.titolo or "Appuntamento"}</b><br><small>{formato_data(a.data)} · {a.ora or ""} · {a.luogo or ""}</small></span><i class="bi bi-calendar"></i></div>' for a in appuntamenti_r]) or '<p class="muted">Nessun risultato.</p>'
-    html = f"""
-    <div class="topbar"><div><h1 class="page-title">Ricerca globale</h1><p class="muted mb-0">Trova clienti, immobili, pagamenti e appuntamenti.</p></div></div>
-    <div class="soft-card p-4 mb-4"><form class="d-flex gap-2 flex-wrap" method="GET"><input class="form-control" style="flex:1;min-width:240px" name="q" value="{q}" placeholder="Cerca nome, telefono, immobile, nota..."><button class="btn btn-primary btn-rounded"><i class="bi bi-search"></i> Cerca</button></form></div>
-    <div class="row g-4">
-      <div class="col-lg-6"><div class="soft-card p-4"><h4>Clienti</h4>{clienti_html}</div></div>
-      <div class="col-lg-6"><div class="soft-card p-4"><h4>Immobili</h4>{immobili_html}</div></div>
-      <div class="col-lg-6"><div class="soft-card p-4"><h4>Pagamenti</h4>{pagamenti_html}</div></div>
-      <div class="col-lg-6"><div class="soft-card p-4"><h4>Appuntamenti</h4>{appuntamenti_html}</div></div>
-    </div>"""
-    return render_template_string(BASE_HTML, content=html)
-
-@app.route("/backup")
-@login_required
-def backup():
-    memoria = io.BytesIO()
-    with zipfile.ZipFile(memoria, "w", zipfile.ZIP_DEFLATED) as z:
-        for model, nome, campi in [
-            (Cliente, "clienti.csv", ["id","nome","cognome","telefono","email","note","immobile_id"]),
-            (Immobile, "immobili.csv", ["id","codice","titolo","citta","indirizzo","prezzo","metri_quadri","camere","bagni","stato"]),
-            (PagamentoCliente, "pagamenti.csv", ["id","cliente_id","descrizione","importo","data_scadenza","data_pagamento","note"]),
-            (Appuntamento, "appuntamenti.csv", ["id","titolo","data","ora","luogo","note"]),
-            (User, "utenti.csv", ["id","username"]),
-        ]:
-            out = io.StringIO(); w = csv.writer(out); w.writerow(campi)
-            for obj in model.query.all(): w.writerow([getattr(obj, c, "") for c in campi])
-            z.writestr(nome, out.getvalue())
-        z.writestr("README.txt", "Backup esportato dal gestionale. Conserva questo file in un luogo sicuro.\n")
-    memoria.seek(0)
-    nome = "backup_gestionale_" + datetime.now().strftime("%Y%m%d_%H%M") + ".zip"
-    return Response(memoria.getvalue(), mimetype="application/zip", headers={"Content-Disposition": f"attachment; filename={nome}"})
-
-@app.route("/esporta/pagamenti.csv")
-@login_required
-def esporta_pagamenti():
-    out = io.StringIO(); w = csv.writer(out); w.writerow(["cliente","descrizione","importo","scadenza","pagato_il","note"])
-    for p in PagamentoCliente.query.order_by(PagamentoCliente.data_scadenza.asc()).all():
-        nome = f"{p.cliente.nome or ''} {p.cliente.cognome or ''}" if p.cliente else ""
-        w.writerow([nome, p.descrizione, p.importo, p.data_scadenza, p.data_pagamento, p.note])
-    return Response(out.getvalue(), mimetype="text/csv", headers={"Content-Disposition":"attachment; filename=pagamenti.csv"})
-
-@app.route("/utenti", methods=["GET", "POST"])
-@login_required
-def utenti():
-    if request.method == "POST":
-        username = (request.form.get("username") or "").strip(); password = request.form.get("password") or ""
-        if not username or len(password) < 6: flash("Inserisci username e password di almeno 6 caratteri")
-        elif User.query.filter_by(username=username).first(): flash("Username già esistente")
-        else:
-            u = User(username=username); u.set_password(password); db.session.add(u); db.session.commit(); flash("Utente creato")
-        return redirect(url_for("utenti"))
-    righe = ""
-    for u in User.query.order_by(User.id.asc()).all():
-        azione = "" if u.id == current_user.id else f'<a class="btn btn-sm btn-outline-danger" href="/utente/{u.id}/elimina" onclick="return confirm(\'Eliminare questo utente?\')">Elimina</a>'
-        nota = "Utente attuale" if u.id == current_user.id else ""
-        righe += f'<tr><td><b>{u.username}</b></td><td>{nota}</td><td class="text-end">{azione}</td></tr>'
-    html = f"""
-    <div class="topbar"><div><h1 class="page-title">Utenti</h1><p class="muted mb-0">Gestisci gli accessi al gestionale.</p></div></div>
-    <div class="row g-4"><div class="col-lg-7"><div class="soft-card p-4"><h4>Utenti attivi</h4><div class="table-responsive"><table class="table"><thead><tr><th>Username</th><th>Note</th><th></th></tr></thead><tbody>{righe}</tbody></table></div></div></div>
-    <div class="col-lg-5"><div class="soft-card p-4"><h4>Nuovo utente</h4><form method="POST"><label class="form-label">Username</label><input class="form-control mb-3" name="username"><label class="form-label">Password provvisoria</label><input class="form-control mb-3" type="password" name="password"><button class="btn btn-primary btn-rounded">Crea utente</button></form></div></div></div>"""
-    return render_template_string(BASE_HTML, content=html)
-
-@app.route("/utente/<int:id>/elimina")
-@login_required
-def elimina_utente(id):
-    if id == current_user.id: flash("Non puoi eliminare l'utente con cui sei collegato")
-    else:
-        u = User.query.get_or_404(id); db.session.delete(u); db.session.commit(); flash("Utente eliminato")
-    return redirect(url_for("utenti"))
 
 # =========================================================
 # FILES
